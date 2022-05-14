@@ -5,6 +5,7 @@
 #include <string>
 #include <fstream>
 #include "shaders.h"
+#include "h2bParser.h"
 
 #define PI 3.14159265359f
 #define TO_RADIANS PI / 180.0f
