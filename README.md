@@ -16,5 +16,6 @@ Level renderer made in Vulkan for PP4 final
 
 
 ***Credits***
-3D Lowpoly Cartoon Dungeon Pack 3D model by Mitylernal(https://www.turbosquid.com/3d-models/3d-lowpoly-cartoon-dungeon-pack-3d-model-1823153)
+Low poly style PIG by zisongbr (https://opengameart.org/content/low-poly-pig-with-blend)
+Modular Dungeons Pack (https://quaternius.com/packs/modulardungeon.html)
 

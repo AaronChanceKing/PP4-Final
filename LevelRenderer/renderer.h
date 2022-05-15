@@ -6,9 +6,11 @@
 #include <fstream>
 #include "shaders.h"
 #include "h2bParser.h"
+#include "level_Renderer.h"
 
 #define PI 3.14159265359f
 #define TO_RADIANS PI / 180.0f
+#define MAX_SUBMESH_PER_DRAW 1024
 #ifdef _WIN32 // must use MT platform DLL libraries on windows
 	#pragma comment(lib, "shaderc_combined.lib") 
 #endif
@@ -21,6 +23,18 @@ const char* pixelShaderSource = Shaders::pixelShader;
 // Creation, Rendering & Cleanup
 class Renderer
 {
+	struct SHADER_MODEL_DATA
+	{
+		GW::MATH::GVECTORF ligthDirection, sunColor;
+		GW::MATH::GMATRIXF viewMatrix, projectionMartix;
+		GW::MATH::GMATRIXF matrices[MAX_SUBMESH_PER_DRAW];
+		H2B::ATTRIBUTES materials[MAX_SUBMESH_PER_DRAW];
+
+		GW::MATH::GVECTORF sunAmbient, camPos;
+	};
+	//GameLevel.txt
+	std::vector<LevelRenderer*> OBJMESHES;
+
 	// proxy handles
 	GW::SYSTEM::GWindow win;
 	GW::GRAPHICS::GVulkanSurface vlk;
@@ -34,38 +48,49 @@ class Renderer
 	float cameraMoveSpeed = 0.18f;
 	float lookSensitivity = 4.0f;
 
-	//World matrix
-	GW::MATH::GMATRIXF Matrix;
-	//View matrix
-	GW::MATH::GMATRIXF ViewMatrix;
-	//Projection matrix
-	GW::MATH::GMATRIXF ProjectionMatrix;
-
-	// what we need at a minimum to draw a triangle
+	// Buffers
 	VkDevice device = nullptr;
 	VkBuffer vertexHandle = nullptr;
 	VkDeviceMemory vertexData = nullptr;
+	VkBuffer indexHandle = nullptr;
+	VkDeviceMemory indexData = nullptr;
+	std::vector<VkBuffer> storageHandle;
+	std::vector<VkDeviceMemory> storageData;
+
+	//Shaders
 	VkShaderModule vertexShader = nullptr;
 	VkShaderModule pixelShader = nullptr;
+
 	// pipeline settings for drawing (also required)
 	VkPipeline pipeline = nullptr;
 	VkPipelineLayout pipelineLayout = nullptr;
+	VkDescriptorSetLayout descriptorLayout;
+	VkDescriptorPool descriptorPool;
+	std::vector<VkDescriptorSet> descriptorSet;
 
+	//Matrix
+	GW::MATH::GMATRIXF vMatrix;
+	GW::MATH::GMATRIXF pMatrix;
+	//Lighting
+	GW::MATH::GVECTORF LightDirection = { -1.0f, -1.0f, 2.0f, 0.0f };
+	GW::MATH::GVECTORF LightColor = { 0.9f, 0.9, 1.0f, 1.0f };
+
+	//H2B
+	SHADER_MODEL_DATA ModelData;
+	std::vector<GW::MATH::GMATRIXF> marixs;
+	std::vector<unsigned int> mat_ID;
+	std::vector<H2B::ATTRIBUTES> attrib;
 
 public:
-	std::chrono::time_point<std::chrono::system_clock> start, end;
 
-	// TODO: Part 1c
-	struct Vertex { float x, y, z, w; };
-
-	// TODO: Part 2b
-	struct SHADER_VARS
+	struct MESH_INDEX
 	{
 		GW::MATH::GMATRIXF wMatrix;
-		GW::MATH::GMATRIXF vMatrix;
+		unsigned ID;
 	};
 
-		// TODO: Part 2f
+	std::string levelName = "Dungeon";
+
 	Renderer(GW::SYSTEM::GWindow _win, GW::GRAPHICS::GVulkanSurface _vlk)
 	{
 		win = _win;
@@ -78,18 +103,89 @@ public:
 		Controller.Create();
 		proxy.Create();
 
-		//Floor
-		GW::MATH::GMATRIXF matrix = GW::MATH::GIdentityMatrixF;
-		GW::MATH::GMatrix::TranslateGlobalF(matrix, GW::MATH::GVECTORF({ 0.0f, -0.5f}), matrix);
-		GW::MATH::GMatrix::RotateXGlobalF(matrix, G_DEGREE_TO_RADIAN(90), matrix);
+		//View Matrix
+		GW::MATH::GVECTORF eye = { 5.0f, 15.0f, -3.0f, 0.0f };
+		GW::MATH::GVECTORF at = { 1.0f, 0.0f, 0.0f, 0.0f };
+		GW::MATH::GVECTORF up = { 0.0f, 1.0f, 0.0f, 0.0f };
+		proxy.LookAtLHF(eye, at, up, vMatrix);
+		ModelData.viewMatrix = vMatrix;
+		//Inverse View Matrix
+		//proxy.InverseF(vMatrix, vMatrix);
+		
+		//Projection Matrix
+		float AR = 0.0f;
+		vlk.GetAspectRatio(AR);
+		proxy.ProjectionVulkanLHF(G2D_DEGREE_TO_RADIAN(65.0f), AR, 0.1f, 100.0f, pMatrix);
+		ModelData.projectionMartix = pMatrix;
 
-		Matrix = matrix;
+		//Lighting
+		float lightVectLength = std::sqrtf
+		(
+			(LightDirection.x * LightDirection.x) +
+			(LightDirection.y * LightDirection.y) +
+			(LightDirection.z * LightDirection.z)
+		);
+		LightDirection.x /= lightVectLength;
+		LightDirection.y /= lightVectLength;
+		LightDirection.z /= lightVectLength;
+		ModelData.ligthDirection = LightDirection;
+		ModelData.sunColor = LightColor;
 
-		// Init camera and view
-		GW::MATH::GVECTORF eye = { 2.0f, 0.5f, 0.0f };
-		GW::MATH::GVECTORF at = { 0.0f, 0.0f, 0.0f };
-		GW::MATH::GVECTORF up = { 0.0f, 1.0f, 0.0f };
-		proxy.LookAtLHF(eye, at, up, ViewMatrix);
+		ModelData.camPos = vMatrix.row4;
+		ModelData.sunAmbient = { 0.75f, 0.75f, 0.85f, 1.0f };
+
+		//Get mesh name and send it to LevelRenderer
+		std::string address = "../../Assets/" + levelName + "/GameData/GameLevel.txt";
+		std::string line;
+		std::fstream myFile(address);
+		if (myFile.is_open())
+		{
+			//Read tho GameLevel.txt
+			while (std::getline(myFile, line))
+			{
+				//Find first mesh
+				if (line == "MESH")
+				{
+					while (std::getline(myFile, line))
+					{
+						GW::MATH::GMATRIXF objMatr;
+						std::string mesh;
+						mesh += line;
+						LevelRenderer* instance = new LevelRenderer(mesh, levelName);
+						OBJMESHES.push_back(instance);
+						break;
+					}
+				}
+			}
+			//Close file
+			myFile.close();
+		}
+		else std::cout << "File failed to open: " << address << std::endl;
+
+		//Get mesh count
+		int meshcount = 0;
+		for (unsigned i = 0; i < OBJMESHES.size(); i++)
+		{
+			for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
+			{
+				ModelData.matrices[meshcount] = OBJMESHES[i]->wMatrix;
+				meshcount++;
+			}
+		}
+
+		//Set materials
+		for (unsigned i = 0; i < OBJMESHES.size(); i++)
+		{
+			for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
+			{
+				attrib.push_back(OBJMESHES[i]->materials[j].attrib);
+			}
+		}
+
+		for (unsigned i = 0; i < attrib.size(); i++)
+		{
+			ModelData.materials[i] = attrib[i];
+		}
 
 		/***************** GEOMETRY INTIALIZATION ******************/
 		// Grab the device & physical device so we can allocate some stuff
@@ -97,146 +193,38 @@ public:
 		vlk.GetDevice((void**)&device);
 		vlk.GetPhysicalDevice((void**)&physicalDevice);
 
-		// TODO: Part 1b
-		// TODO: Part 1c
-		/*Vertex verts[] = {
-			{0.0f,   0.5f, 0.0f, 1.0f},
-			{0.5f, -0.5f, 0.0f, 1.0f},
-			{-0.5f, -0.5f, 0.0f, 1.0f}
-		};*/
-		// Create Vertex Buffer
-		/*float verts[] = {
-			 0.0f,   0.5f,
-			 0.5f, -0.5f,
-			-0.5f, -0.5f
-		};*/
-		// TODO: Part 1d
-		Vertex verts[] = {
-			{	-0.50f,	 0.50f,		0,		1	},
-			{	 0.50f,	 0.50f,		0,		1	},
-			{	-0.5f,	 0.46f,		0,		1	},
-			{	 0.5f,	 0.46f,		0,		1	},
-			{	-0.5f,	 0.42f,		0,		1	},
-			{	 0.5f,	 0.42f,		0,		1	},
-			{	-0.5f,	 0.38f,		0,		1	},
-			{	 0.5f,	 0.38f,		0,		1	},
-			{	-0.5f,	 0.34f,		0,		1	},
-			{	 0.5f,	 0.34f,		0,		1	},
-			{	-0.5f,	 0.30f,		0,		1	},
-			{	 0.5f,	 0.30f,		0,		1	},
-			{	-0.5f,	 0.26f,		0,		1	},
-			{	 0.5f,	 0.26f,		0,		1	},
-			{	-0.5f,	 0.22f,		0,		1	},
-			{	 0.5f,	 0.22f,		0,		1	},
-			{	-0.5f,	 0.18f,		0,		1	},
-			{	 0.5f,	 0.18f,		0,		1	},
-			{	-0.5f,	 0.14f,		0,		1	},
-			{	 0.5f,	 0.14f,		0,		1	},
-			{	-0.5f,	 0.10f,		0,		1	},
-			{	 0.5f,	 0.10f,		0,		1	},
-			{	-0.5f,	 0.06f,		0,		1	},
-			{	 0.5f,	 0.06f,		0,		1	},
-			{	-0.5f,	 0.02f,		0,		1	},
-			{	 0.5f,	 0.02f,		0,		1	},
+		//Send data to buffer
+		for (unsigned i = 0; i < OBJMESHES.size(); i++)
+		{
+			GvkHelper::create_buffer(physicalDevice, device, sizeof(H2B::VERTEX) * OBJMESHES[i]->vertexCount,
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+				VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &OBJMESHES[i]->vertexHandle, &OBJMESHES[i]->vertexData);
+			GvkHelper::write_to_buffer(device, OBJMESHES[i]->vertexData, OBJMESHES[i]->meshVert, sizeof(H2B::VERTEX) * OBJMESHES[i]->vertexCount);
 
-			{	-0.50f,	 -0.50f,	0,		1	},
-			{	 0.50f,	 -0.50f,	0,		1	},
-			{	-0.5f,	 -0.46f,	0,		1	},
-			{	 0.5f,	 -0.46f,	0,		1	},
-			{	-0.5f,	 -0.42f,	0,		1	},
-			{	 0.5f,	 -0.42f,	0,		1	},
-			{	-0.5f,	 -0.38f,	0,		1	},
-			{	 0.5f,	 -0.38f,	0,		1	},
-			{	-0.5f,	 -0.34f,	0,		1	},
-			{	 0.5f,	 -0.34f,	0,		1	},
-			{	-0.5f,	 -0.30f,	0,		1	},
-			{	 0.5f,	 -0.30f,	0,		1	},
-			{	-0.5f,	 -0.26f,	0,		1	},
-			{	 0.5f,	 -0.26f,	0,		1	},
-			{	-0.5f,	 -0.22f,	0,		1	},
-			{	 0.5f,	 -0.22f,	0,		1	},
-			{	-0.5f,	 -0.18f,	0,		1	},
-			{	 0.5f,	 -0.18f,	0,		1	},
-			{	-0.5f,	 -0.14f,	0,		1	},
-			{	 0.5f,	 -0.14f,	0,		1	},
-			{	-0.5f,	 -0.10f,	0,		1	},
-			{	 0.5f,	 -0.10f,	0,		1	},
-			{	-0.5f,	 -0.06f,	0,		1	},
-			{	 0.5f,	 -0.06f,	0,		1	},
-			{	-0.5f,	 -0.02f,	0,		1	},
-			{	 0.5f,	 -0.02f,	0,		1	},
+			GvkHelper::create_buffer(physicalDevice, device, sizeof(int) * OBJMESHES[i]->indexCount,
+				VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+				VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &OBJMESHES[i]->indexHandle, &OBJMESHES[i]->indexData);
+			GvkHelper::write_to_buffer(device, OBJMESHES[i]->indexData, OBJMESHES[i]->meshIndex, sizeof(int) * OBJMESHES[i]->indexCount);
+		}
 
-
-
-
-			{	0.50f,	-0.50f,	 	0,		1	},
-			{	0.50f,	 0.50f,	 	0,		1	},
-			{	0.46f,	-0.5f,	 	0,		1	},
-			{	0.46f,	 0.5f,	 	0,		1	},
-			{	0.42f,	-0.5f,		0,		1	},
-			{	0.42f,	 0.5f,	 	0,		1	},
-			{	0.38f,	-0.5f,	 	0,		1	},
-			{	0.38f,	 0.5f,	 	0,		1	},
-			{	0.34f,	-0.5f,	 	0,		1	},
-			{	0.34f,	 0.5f,	 	0,		1	},
-			{	0.30f,	-0.5f,	 	0,		1	},
-			{	0.30f,	 0.5f,	 	0,		1	},
-			{	0.26f,	-0.5f,	 	0,		1	},
-			{	0.26f,	 0.5f,	 	0,		1	},
-			{	0.22f,	-0.5f,	 	0,		1	},
-			{	0.22f,	 0.5f,	 	0,		1	},
-			{	0.18f,	-0.5f,	 	0,		1	},
-			{	0.18f,	 0.5f,	 	0,		1	},
-			{	0.14f,	-0.5f,	 	0,		1	},
-			{	0.14f,	 0.5f,	 	0,		1	},
-			{	0.10f,	-0.5f,	 	0,		1	},
-			{	0.10f,	 0.5f,	 	0,		1	},
-			{	0.06f,	-0.5f,	 	0,		1	},
-			{	0.06f,	 0.5f,	 	0,		1	},
-			{	0.02f,	-0.5f,	 	0,		1	},
-			{	0.02f,	 0.5f,	 	0,		1	},
-
-			{	-0.50f,	-0.50f,	 	0,		1	},
-			{	-0.50f,	 0.50f,	 	0,		1	},
-			{	-0.46f,	-0.5f,	 	0,		1	},
-			{	-0.46f,	 0.5f,	 	0,		1	},
-			{	-0.42f,	-0.5f,		0,		1	},
-			{	-0.42f,	 0.5f,	 	0,		1	},
-			{	-0.38f,	-0.5f,	 	0,		1	},
-			{	-0.38f,	 0.5f,	 	0,		1	},
-			{	-0.34f,	-0.5f,	 	0,		1	},
-			{	-0.34f,	 0.5f,	 	0,		1	},
-			{	-0.30f,	-0.5f,	 	0,		1	},
-			{	-0.30f,	 0.5f,	 	0,		1	},
-			{	-0.26f,	-0.5f,	 	0,		1	},
-			{	-0.26f,	 0.5f,	 	0,		1	},
-			{	-0.22f,	-0.5f,	 	0,		1	},
-			{	-0.22f,	 0.5f,	 	0,		1	},
-			{	-0.18f,	-0.5f,	 	0,		1	},
-			{	-0.18f,	 0.5f,	 	0,		1	},
-			{	-0.14f,	-0.5f,	 	0,		1	},
-			{	-0.14f,	 0.5f,	 	0,		1	},
-			{	-0.10f,	-0.5f,	 	0,		1	},
-			{	-0.10f,	 0.5f,	 	0,		1	},
-			{	-0.06f,	-0.5f,	 	0,		1	},
-			{	-0.06f,	 0.5f,	 	0,		1	},
-			{	-0.02f,	-0.5f,	 	0,		1	},
-			{	-0.02f,	 0.5f,	 	0,		1	},
-		};
-
-
-		// Transfer triangle data to the vertex buffer. (staging would be prefered here)
-		GvkHelper::create_buffer(physicalDevice, device, sizeof(verts),
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
-			VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &vertexHandle, &vertexData);
-		GvkHelper::write_to_buffer(device, vertexData, verts, sizeof(verts));
+		unsigned int frames;
+		vlk.GetSwapchainImageCount(frames);
+		storageData.resize(frames);
+		storageHandle.resize(frames);
+		descriptorSet.resize(frames);
+		for (size_t i = 0; i < frames; i++)
+		{
+			GvkHelper::create_buffer(physicalDevice, device, sizeof(ModelData),
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+				VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &storageHandle[i], &storageData[i]);
+			GvkHelper::write_to_buffer(device, storageData[i], &ModelData, sizeof(ModelData));
+		}
 
 		/***************** SHADER INTIALIZATION ******************/
-		// Intialize runtime shader compiler HLSL -> SPIRV
+				// Intialize runtime shader compiler HLSL -> SPIRV
 		shaderc_compiler_t compiler = shaderc_compiler_initialize();
 		shaderc_compile_options_t options = shaderc_compile_options_initialize();
 		shaderc_compile_options_set_source_language(options, shaderc_source_language_hlsl);
-		// TODO: Part 3C
 		shaderc_compile_options_set_invert_y(options, false);
 #ifndef NDEBUG
 		shaderc_compile_options_set_generate_debug_info(options);
@@ -281,30 +269,32 @@ public:
 		// Assembly State
 		VkPipelineInputAssemblyStateCreateInfo assembly_create_info = {};
 		assembly_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-		assembly_create_info.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST; /////
+		assembly_create_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 		assembly_create_info.primitiveRestartEnable = false;
+
 		// Vertex Input State
-		// TODO: Part 1c
 		VkVertexInputBindingDescription vertex_binding_description = {};
 		vertex_binding_description.binding = 0;
-		vertex_binding_description.stride = sizeof(Vertex);
+		vertex_binding_description.stride = sizeof(H2B::VERTEX);
 		vertex_binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-		// TODO: Part 1c
-		VkVertexInputAttributeDescription vertex_attribute_description[1] = {
-			{ 0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0 } //uv, normal, etc....
+		VkVertexInputAttributeDescription vertex_attribute_description[3] = 
+		{
+			{ 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 }, //uv, normal, etc....
+			{ 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(H2B::VERTEX, uvw)},
+			{ 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(H2B::VERTEX, nrm)}
 		};
-
 		VkPipelineVertexInputStateCreateInfo input_vertex_info = {};
 		input_vertex_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 		input_vertex_info.vertexBindingDescriptionCount = 1;
 		input_vertex_info.pVertexBindingDescriptions = &vertex_binding_description;
-		input_vertex_info.vertexAttributeDescriptionCount = 1;
+		input_vertex_info.vertexAttributeDescriptionCount = 3;
 		input_vertex_info.pVertexAttributeDescriptions = vertex_attribute_description;
 		// Viewport State (we still need to set this up even though we will overwrite the values)
-		VkViewport viewport = {
-            0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1
-        };
-        VkRect2D scissor = { {0, 0}, {width, height} };
+		VkViewport viewport = 
+		{
+			0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1
+		};
+		VkRect2D scissor = { {0, 0}, {width, height} };
 		VkPipelineViewportStateCreateInfo viewport_create_info = {};
 		viewport_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
 		viewport_create_info.viewportCount = 1;
@@ -315,7 +305,7 @@ public:
 		VkPipelineRasterizationStateCreateInfo rasterization_create_info = {};
 		rasterization_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 		rasterization_create_info.rasterizerDiscardEnable = VK_FALSE;
-		rasterization_create_info.polygonMode = VK_POLYGON_MODE_LINE;// VK_POLYGON_MODE_FILL;
+		rasterization_create_info.polygonMode = VK_POLYGON_MODE_FILL;
 		rasterization_create_info.lineWidth = 1.0f;
 		rasterization_create_info.cullMode = VK_CULL_MODE_BACK_BIT;
 		rasterization_create_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
@@ -364,7 +354,8 @@ public:
 		color_blend_create_info.blendConstants[2] = 0.0f;
 		color_blend_create_info.blendConstants[3] = 0.0f;
 		// Dynamic State 
-		VkDynamicState dynamic_state[2] = { 
+		VkDynamicState dynamic_state[2] = 
+		{
 			// By setting these we do not need to re-create the pipeline on Resize
 			VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR
 		};
@@ -373,23 +364,77 @@ public:
 		dynamic_create_info.dynamicStateCount = 2;
 		dynamic_create_info.pDynamicStates = dynamic_state;
 
-		// TODO: Part 2c
-		VkPushConstantRange pushConstrantRange;
-		pushConstrantRange.offset = 0;
-		pushConstrantRange.size = sizeof(SHADER_VARS);
-		pushConstrantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		VkDescriptorSetLayoutBinding descriptor_layout_binding = {};
+		descriptor_layout_binding.binding = 0;
+		descriptor_layout_binding.descriptorCount = 1;
+		descriptor_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		descriptor_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+		descriptor_layout_binding.pImmutableSamplers = nullptr;
 
+		VkDescriptorSetLayoutCreateInfo descriptor_layout_create_info = {};
+		descriptor_layout_create_info.bindingCount = 1;
+		descriptor_layout_create_info.flags = 0;
+		descriptor_layout_create_info.pBindings = &descriptor_layout_binding;
+		descriptor_layout_create_info.pNext = nullptr;
+		descriptor_layout_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+
+		VkResult r = vkCreateDescriptorSetLayout(device, &descriptor_layout_create_info,
+			nullptr, &descriptorLayout);
+
+		VkDescriptorPoolCreateInfo descriptor_pool_create_info = {};
+		VkDescriptorPoolSize descriptor_pool_size = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, frames };
+		descriptor_pool_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		descriptor_pool_create_info.poolSizeCount = 1;
+		descriptor_pool_create_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+		descriptor_pool_create_info.pPoolSizes = &descriptor_pool_size;
+		descriptor_pool_create_info.maxSets = frames;
+		descriptor_pool_create_info.pNext = nullptr;
+		vkCreateDescriptorPool(device, &descriptor_pool_create_info, nullptr, &descriptorPool);
+
+		VkDescriptorSetAllocateInfo descriptor_set_allocate_info = {};
+		descriptor_set_allocate_info.descriptorPool = descriptorPool;
+		descriptor_set_allocate_info.descriptorSetCount = 1;
+		descriptor_set_allocate_info.pNext = nullptr;
+		descriptor_set_allocate_info.pSetLayouts = &descriptorLayout;
+		descriptor_set_allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		for (unsigned i = 0; i < frames; ++i) 
+		{
+			vkAllocateDescriptorSets(device, &descriptor_set_allocate_info, &descriptorSet[i]);
+		}
+
+		for (unsigned i = 0; i < frames; ++i) 
+		{
+			VkDescriptorBufferInfo dbinfo = { storageHandle[i], 0, VK_WHOLE_SIZE };
+			VkWriteDescriptorSet write_descriptor_set = {};
+			write_descriptor_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			write_descriptor_set.descriptorCount = 1;
+			write_descriptor_set.dstArrayElement = 0;
+			write_descriptor_set.dstBinding = 0;
+			write_descriptor_set.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			write_descriptor_set.dstSet = descriptorSet[i];
+			write_descriptor_set.pBufferInfo = &dbinfo;
+			vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+		}
+
+		VkDescriptorBufferInfo descriptor_buffer_info = {};
 
 		// Descriptor pipeline layout
 		VkPipelineLayoutCreateInfo pipeline_layout_create_info = {};
 		pipeline_layout_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipeline_layout_create_info.setLayoutCount = 0;
-		pipeline_layout_create_info.pSetLayouts = VK_NULL_HANDLE;
-		pipeline_layout_create_info.pushConstantRangeCount = 1; // TODO: Part 2d 
-		pipeline_layout_create_info.pPushConstantRanges = &pushConstrantRange; // TODO: Part 2d
-		vkCreatePipelineLayout(device, &pipeline_layout_create_info, 
+
+		pipeline_layout_create_info.pSetLayouts = &descriptorLayout;
+		pipeline_layout_create_info.setLayoutCount = 1;
+
+		VkPushConstantRange push_constant_range = {};
+		push_constant_range.offset = 0;
+		push_constant_range.size = sizeof(MESH_INDEX);
+		push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		pipeline_layout_create_info.pushConstantRangeCount = 1;
+		pipeline_layout_create_info.pPushConstantRanges = &push_constant_range;
+		vkCreatePipelineLayout(device, &pipeline_layout_create_info,
 			nullptr, &pipelineLayout);
-	    // Pipeline State... (FINALLY) 
+		// Pipeline State... (FINALLY) 
 		VkGraphicsPipelineCreateInfo pipeline_create_info = {};
 		pipeline_create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 		pipeline_create_info.stageCount = 2;
@@ -406,7 +451,7 @@ public:
 		pipeline_create_info.renderPass = renderPass;
 		pipeline_create_info.subpass = 0;
 		pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
-		vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, 
+		vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
 			&pipeline_create_info, nullptr, &pipeline);
 
 		/***************** CLEANUP / SHUTDOWN ******************/
@@ -415,10 +460,14 @@ public:
 			if (+shutdown.Find(GW::GRAPHICS::GVulkanSurface::Events::RELEASE_RESOURCES, true)) {
 				CleanUp(); // unlike D3D we must be careful about destroy timing
 			}
-		});
+			});
 	}
 	void Render()
 	{
+		//Update the camera
+		ModelData.viewMatrix = vMatrix;
+		ModelData.camPos = vMatrix.row4;
+
 		// grab the current Vulkan commandBuffer
 		unsigned int currentBuffer;
 		vlk.GetSwapchainCurrentImage(currentBuffer);
@@ -436,33 +485,29 @@ public:
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-		// TODO: Part 3a
 
-		//Might need to turn this back on and try to get it working
-		//
-		/*GW::GRAPHICS::GVulkanSurface surface = {};
-		float aspect;
-		surface.GetAspectRatio(aspect);*/
-
-		GW::MATH::GMatrix::ProjectionVulkanLHF(G_DEGREE_TO_RADIAN(65.0f), 800.0f/600.0f, 0.1f, 100.0f, ProjectionMatrix);  //Possibly going to fuck something up(param 2 see above)
-		
-		// TODO: Part 3b
-		// TODO: Part 2b
-		SHADER_VARS wMatrix;
-		wMatrix.wMatrix = Matrix;
-		
-		// TODO: Part 2f, Part 3b
-		GW::MATH::GMATRIXF combo;
-		GW::MATH::GMatrix::MultiplyMatrixF(ViewMatrix, ProjectionMatrix, combo);
-		wMatrix.vMatrix = combo;
-		// TODO: Part 2d
-		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(SHADER_VARS), &wMatrix);
-		
-		// now we can draw
 		VkDeviceSize offsets[] = { 0 };
-		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexHandle, offsets);
-		vkCmdDraw(commandBuffer, 104, 1, 0, 0); // TODO: Part 1b // TODO: Part 1c
-		
+
+		MESH_INDEX meshIndex;
+		unsigned ID = 0;
+
+		for (unsigned i = 0; i < OBJMESHES.size(); i++)
+		{
+			GvkHelper::write_to_buffer(device, storageData[currentBuffer], &ModelData, sizeof(SHADER_MODEL_DATA));
+			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet[currentBuffer], 0, nullptr);
+
+			//Loop tho objmesh and draw
+			for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
+			{
+				meshIndex = { OBJMESHES[i]->wMatrix, ID };
+				ID++;
+
+				vkCmdBindVertexBuffers(commandBuffer, 0, 1, &OBJMESHES[i]->vertexHandle, offsets);
+				vkCmdBindIndexBuffer(commandBuffer, OBJMESHES[i]->indexHandle, 0, VK_INDEX_TYPE_UINT32);
+				vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(MESH_INDEX), &meshIndex);
+				vkCmdDrawIndexed(commandBuffer, OBJMESHES[i]->meshes[j].drawInfo.indexCount, 1, OBJMESHES[i]->meshes[j].drawInfo.indexOffset, 0, 0);
+			}
+		}
 	}
 
 	//Camera movment
@@ -477,7 +522,7 @@ public:
 
 		//Set Camera to inverse of view
 		GW::MATH::GMATRIXF camera;
-		proxy.InverseF(ViewMatrix, camera);
+		proxy.InverseF(vMatrix, camera);
 		GW::MATH::GVECTORF displacement;
 
 		//Get Inputs
@@ -528,7 +573,7 @@ public:
 		}
 
 		// Apply to view matrix and inverse
-		proxy.InverseF(camera, ViewMatrix);
+		proxy.InverseF(camera, vMatrix);
 	}
 		
 private:
@@ -537,11 +582,36 @@ private:
 		// wait till everything has completed
 		vkDeviceWaitIdle(device);
 		// Release allocated buffers, shaders & pipeline
+		vkDestroyBuffer(device, indexHandle, nullptr);
+		vkFreeMemory(device, indexData, nullptr);
+		for (unsigned i = 0; i < storageData.size(); i++) 
+		{
+			vkDestroyBuffer(device, storageHandle[i], nullptr);
+			vkFreeMemory(device, storageData[i], nullptr);
+		}
+		storageData.clear();
+		storageHandle.clear();
+
 		vkDestroyBuffer(device, vertexHandle, nullptr);
 		vkFreeMemory(device, vertexData, nullptr);
 		vkDestroyShaderModule(device, vertexShader, nullptr);
 		vkDestroyShaderModule(device, pixelShader, nullptr);
+		vkDestroyDescriptorSetLayout(device, descriptorLayout, nullptr);
+		vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyPipeline(device, pipeline, nullptr);
+
+		for (unsigned i = 0; i < OBJMESHES.size(); i++)
+		{
+			vkDestroyBuffer(device, OBJMESHES[i]->vertexHandle, nullptr);
+			vkFreeMemory(device, OBJMESHES[i]->vertexData, nullptr);
+
+			vkDestroyBuffer(device, OBJMESHES[i]->indexHandle, nullptr);
+			vkFreeMemory(device, OBJMESHES[i]->indexData, nullptr);
+		}
+
+		unsigned meshes = OBJMESHES.size();
+		for (unsigned i = 0; i < meshes; ++i) delete OBJMESHES[i];
 	}
 };

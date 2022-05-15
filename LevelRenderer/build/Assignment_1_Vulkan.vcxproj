@@ -315,6 +315,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   <ItemGroup>
     <ClCompile Include="C:\School\ProjectPortfolio4\PP4-Final\LevelRenderer\main.cpp" />
     <ClInclude Include="..\h2bParser.h" />
+    <ClInclude Include="..\Level_Data.h" />
+    <ClInclude Include="..\level_Renderer.h" />
     <ClInclude Include="..\shaders.h" />
     <ClInclude Include="C:\School\ProjectPortfolio4\PP4-Final\LevelRenderer\renderer.h" />
   </ItemGroup>

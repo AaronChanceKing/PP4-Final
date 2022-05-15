@@ -15,6 +15,12 @@
     <ClInclude Include="..\h2bParser.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\Level_Data.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\level_Renderer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="C:\School\ProjectPortfolio4\PP4-Final\LevelRenderer\CMakeLists.txt" />
