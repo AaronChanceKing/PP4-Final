@@ -104,7 +104,7 @@ public:
 		proxy.Create();
 
 		//View Matrix
-		GW::MATH::GVECTORF eye = { 5.0f, 15.0f, -3.0f, 0.0f };
+		GW::MATH::GVECTORF eye = { 5.0f, 5.0f, -3.0f, 0.0f };
 		GW::MATH::GVECTORF at = { 1.0f, 0.0f, 0.0f, 0.0f };
 		GW::MATH::GVECTORF up = { 0.0f, 1.0f, 0.0f, 0.0f };
 		proxy.LookAtLHF(eye, at, up, vMatrix);
@@ -132,7 +132,7 @@ public:
 		ModelData.sunColor = LightColor;
 
 		ModelData.camPos = vMatrix.row4;
-		ModelData.sunAmbient = { 0.75f, 0.75f, 0.85f, 1.0f };
+		ModelData.sunAmbient = { 0.75f, 0.55f, 0.55f, 1.0f };
 
 		//Get mesh name and send it to LevelRenderer
 		std::string address = "../../Assets/" + levelName + "/GameData/GameLevel.txt";

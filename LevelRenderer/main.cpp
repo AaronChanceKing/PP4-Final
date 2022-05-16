@@ -29,7 +29,7 @@ int main()
 	{
 		win.SetWindowName("Aaron King---Vulkan---Final");
 		VkClearValue clrAndDepth[2];
-		clrAndDepth[0].color = { {0.2f, 0.1f, 0.75f, 1} };
+		clrAndDepth[0].color = { {0.35f, 0.15f, 0.15f, 1} };
 		clrAndDepth[1].depthStencil = { 1.0f, 0u };
 		msgs.Create([&](const GW::GEvent& e) {
 			GW::SYSTEM::GWindow::Events q;
