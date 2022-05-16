@@ -18,4 +18,6 @@ Level renderer made in Vulkan for PP4 final
 ***Credits***
 Low poly style PIG by zisongbr (https://opengameart.org/content/low-poly-pig-with-blend)
 Modular Dungeons Pack (https://quaternius.com/packs/modulardungeon.html)
+Farm Buildings Pack (https://quaternius.com/packs/farmbuildings.html)
+Simple Nature Pack (https://quaternius.com/packs/simplenature.html)
 
