@@ -540,7 +540,7 @@ public:
 		float LStickY = 0;		Input.GetState(G_LY_AXIS, LStickY);
 		float LStickX = 0;		Input.GetState(G_LX_AXIS, LStickX);
 
-		if (GetKeyState(VK_F1) & 0x8000)
+		if (GetAsyncKeyState(VK_F1) & 0x8000)
 		{
 			CleanUp();
 			return false;

@@ -65,8 +65,11 @@ int main()
 					{
 						if (!renderer.UpdateCamera())
 						{
-							level = loadFile();
-
+							std::string newLevel = loadFile();
+							if (newLevel != "")
+							{
+								level = newLevel;
+							}
 							break;
 						}
 						renderer.Render();
@@ -111,9 +114,13 @@ std::string loadFile()
 		pFileOpen->Release();
 	}
 
-	//Parse the value into usable string
-	std::wstring ws(pszFilePath);
-	std::string str(ws.begin(), ws.end());
+	if (pszFilePath != NULL)
+	{
+		//Parse the value into usable string
+		std::wstring ws(pszFilePath);
+		std::string str(ws.begin(), ws.end());
 
-	return str;
+		return str;
+	}
+	else return "";
 }
