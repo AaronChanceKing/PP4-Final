@@ -45,7 +45,7 @@ class Renderer
 	GW::INPUT::GInput Input;
 	GW::INPUT::GController Controller;
 	float updatesPerSecond = 60;
-	float cameraMoveSpeed = 0.18f;
+	float cameraMoveSpeed = 1.0f;
 	float lookSensitivity = 4.0f;
 
 	// Buffers
@@ -89,12 +89,14 @@ public:
 		unsigned ID;
 	};
 
-	std::string levelName = "Farm"; //Dungeon
+	std::string levelName;// = "Farm"; //Dungeon
+	bool end = false;
 
-	Renderer(GW::SYSTEM::GWindow _win, GW::GRAPHICS::GVulkanSurface _vlk)
+	Renderer(GW::SYSTEM::GWindow _win, GW::GRAPHICS::GVulkanSurface _vlk, std::string _level)
 	{
 		win = _win;
 		vlk = _vlk;
+		levelName = _level;
 		unsigned int width, height;
 		win.GetClientWidth(width);
 		win.GetClientHeight(height);
@@ -135,7 +137,7 @@ public:
 		ModelData.sunAmbient = { 0.75f, 0.55f, 0.55f, 1.0f };
 
 		//Get mesh name and send it to LevelRenderer
-		std::string address = "../../Assets/" + levelName + "/GameData/GameLevel.txt";
+		std::string address = "../../Assets/" + levelName + "/GameData/" + levelName + ".txt";
 		std::string line;
 		std::fstream myFile(address);
 		if (myFile.is_open())
@@ -459,6 +461,7 @@ public:
 		shutdown.Create(vlk, [&]() {
 			if (+shutdown.Find(GW::GRAPHICS::GVulkanSurface::Events::RELEASE_RESOURCES, true)) {
 				CleanUp(); // unlike D3D we must be careful about destroy timing
+				end = true;
 			}
 			});
 	}
@@ -511,7 +514,7 @@ public:
 	}
 
 	//Camera movment
-	void UpdateCamera()
+	bool UpdateCamera()
 	{
 		// Timer
 		static std::chrono::system_clock::time_point prevTime = std::chrono::system_clock::now();
@@ -536,6 +539,12 @@ public:
 		float D = 0;			Input.GetState(G_KEY_D, D);
 		float LStickY = 0;		Input.GetState(G_LY_AXIS, LStickY);
 		float LStickX = 0;		Input.GetState(G_LX_AXIS, LStickX);
+
+		if (GetKeyState(VK_F1) & 0x8000)
+		{
+			CleanUp();
+			return false;
+		}
 
 		displacement = {
 			(D - A + LStickX) * deltaTime.count() * cameraMoveSpeed,
@@ -574,6 +583,8 @@ public:
 
 		// Apply to view matrix and inverse
 		proxy.InverseF(camera, vMatrix);
+
+		return true;
 	}
 		
 private:

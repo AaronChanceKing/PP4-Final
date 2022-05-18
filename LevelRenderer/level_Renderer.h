@@ -73,7 +73,7 @@ public:
 
 		//Open gamelevel.txt
 		std::string line;
-		std::string gameLevelAddress = "../../Assets/" + _levelName + "/GameData/GameLevel.txt";
+		std::string gameLevelAddress = "../../Assets/" + _levelName + "/GameData/" + _levelName + ".txt";
 		myFile.open(gameLevelAddress, std::ios::in);
 		if (myFile.is_open())
 		{

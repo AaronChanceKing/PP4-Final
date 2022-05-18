@@ -14,6 +14,11 @@ Level renderer made in Vulkan for PP4 final
 --Right trigger to move up
 --Left trigger to move down
 
+***Level Swapping***
+-Press F1 to open the file explorer
+-Choose a file from the Game Data folder located in each asset folder (Must have the same name as the level being loaded)
+-Needs access to ../../Assets folder to run
+
 
 ***Credits***
 Low poly style PIG by zisongbr (https://opengameart.org/content/low-poly-pig-with-blend)
