@@ -62,7 +62,7 @@ class Renderer
 	VkShaderModule pixelShader = nullptr;
 
 	// pipeline settings for drawing (also required)
-	VkPipeline pipeline = nullptr;
+	VkPipeline pipeline[2];
 	VkPipelineLayout pipelineLayout = nullptr;
 	VkDescriptorSetLayout descriptorLayout;
 	VkDescriptorPool descriptorPool;
@@ -434,8 +434,8 @@ public:
 
 		pipeline_layout_create_info.pushConstantRangeCount = 1;
 		pipeline_layout_create_info.pPushConstantRanges = &push_constant_range;
-		vkCreatePipelineLayout(device, &pipeline_layout_create_info,
-			nullptr, &pipelineLayout);
+		vkCreatePipelineLayout(device, &pipeline_layout_create_info, nullptr, &pipelineLayout);
+
 		// Pipeline State... (FINALLY) 
 		VkGraphicsPipelineCreateInfo pipeline_create_info = {};
 		pipeline_create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -453,8 +453,9 @@ public:
 		pipeline_create_info.renderPass = renderPass;
 		pipeline_create_info.subpass = 0;
 		pipeline_create_info.basePipelineHandle = VK_NULL_HANDLE;
-		vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
-			&pipeline_create_info, nullptr, &pipeline);
+		for(unsigned i = 0; i < 2; i++)
+			vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_create_info, nullptr, &pipeline[i]);
+
 
 		/***************** CLEANUP / SHUTDOWN ******************/
 		// GVulkanSurface will inform us when to release any allocated resources
@@ -465,6 +466,7 @@ public:
 			}
 			});
 	}
+
 	void Render()
 	{
 		//Update the camera
@@ -480,14 +482,16 @@ public:
 		unsigned int width, height;
 		win.GetClientWidth(width);
 		win.GetClientHeight(height);
+
+
 		// setup the pipeline's dynamic settings
 		VkViewport viewport = {
-            0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1
+            0, 0, static_cast<float>(width) / 2, static_cast<float>(height), 0, 1
         };
-        VkRect2D scissor = { {0, 0}, {width, height} };
+        VkRect2D scissor = { {0, 0}, {width / 2 , height} };
 		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline[0]);
 
 		VkDeviceSize offsets[] = { 0 };
 
@@ -498,6 +502,33 @@ public:
 		{
 			GvkHelper::write_to_buffer(device, storageData[currentBuffer], &ModelData, sizeof(SHADER_MODEL_DATA));
 			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet[currentBuffer], 0, nullptr);
+
+			//Loop tho objmesh and draw
+			for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
+			{
+				meshIndex = { OBJMESHES[i]->wMatrix, ID };
+				ID++;
+
+				vkCmdBindVertexBuffers(commandBuffer, 0, 1, &OBJMESHES[i]->vertexHandle, offsets);
+				vkCmdBindIndexBuffer(commandBuffer, OBJMESHES[i]->indexHandle, 0, VK_INDEX_TYPE_UINT32);
+				vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(MESH_INDEX), &meshIndex);
+				vkCmdDrawIndexed(commandBuffer, OBJMESHES[i]->meshes[j].drawInfo.indexCount, 1, OBJMESHES[i]->meshes[j].drawInfo.indexOffset, 0, 0);
+			}
+		}
+
+		ID = 0;
+
+		viewport.x = (float)width / 2;
+		scissor.offset.x = width / 2;
+
+		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline[1]);
+
+		for (unsigned i = 0; i < OBJMESHES.size(); i++)
+		{
+			//GvkHelper::write_to_buffer(device, storageData[currentBuffer], &ModelData, sizeof(SHADER_MODEL_DATA));
+			//vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet[currentBuffer], 0, nullptr);
 
 			//Loop tho objmesh and draw
 			for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
@@ -611,7 +642,8 @@ private:
 		vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-		vkDestroyPipeline(device, pipeline, nullptr);
+		for(unsigned i = 0; i < 2; i++)
+			vkDestroyPipeline(device, pipeline[i], nullptr);
 
 		for (unsigned i = 0; i < OBJMESHES.size(); i++)
 		{
