@@ -26,7 +26,8 @@ class Renderer
 	struct SHADER_MODEL_DATA
 	{
 		GW::MATH::GVECTORF ligthDirection, sunColor;
-		GW::MATH::GMATRIXF viewMatrix, projectionMartix;
+		GW::MATH::GMATRIXF viewMatrix;
+		GW::MATH::GMATRIXF projectionMartix;
 		GW::MATH::GMATRIXF matrices[MAX_SUBMESH_PER_DRAW];
 		H2B::ATTRIBUTES materials[MAX_SUBMESH_PER_DRAW];
 
@@ -42,6 +43,7 @@ class Renderer
 	GW::MATH::GMatrix proxy;
 
 	//Input
+	bool splitScreen = false;
 	GW::INPUT::GInput Input;
 	GW::INPUT::GController Controller;
 	float updatesPerSecond = 60;
@@ -112,7 +114,6 @@ public:
 		proxy.LookAtLHF(eye, at, up, vMatrix);
 		ModelData.viewMatrix = vMatrix;
 		//Inverse View Matrix
-		//proxy.InverseF(vMatrix, vMatrix);
 		
 		//Projection Matrix
 		float AR = 0.0f;
@@ -484,64 +485,99 @@ public:
 		win.GetClientHeight(height);
 
 
-		// setup the pipeline's dynamic settings
-		VkViewport viewport = {
-            0, 0, static_cast<float>(width) / 2, static_cast<float>(height), 0, 1
-        };
-        VkRect2D scissor = { {0, 0}, {width / 2 , height} };
-		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline[0]);
-
-		VkDeviceSize offsets[] = { 0 };
-
-		MESH_INDEX meshIndex;
-		unsigned ID = 0;
-
-		for (unsigned i = 0; i < OBJMESHES.size(); i++)
+		if (splitScreen)
 		{
-			GvkHelper::write_to_buffer(device, storageData[currentBuffer], &ModelData, sizeof(SHADER_MODEL_DATA));
-			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet[currentBuffer], 0, nullptr);
+			// setup the pipeline's dynamic settings
+			VkViewport viewport = {
+				0, 0, static_cast<float>(width) / 2.1f, static_cast<float>(height), 0, 1
+			};
+			VkRect2D scissor = { {0, 0}, {width / 2 , height} };
+			vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+			vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline[0]);
 
-			//Loop tho objmesh and draw
-			for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
+			VkDeviceSize offsets[] = { 0 };
+
+			MESH_INDEX meshIndex;
+			unsigned ID = 0;
+
+			for (unsigned i = 0; i < OBJMESHES.size(); i++)
 			{
-				meshIndex = { OBJMESHES[i]->wMatrix, ID };
-				ID++;
+				GvkHelper::write_to_buffer(device, storageData[currentBuffer], &ModelData, sizeof(SHADER_MODEL_DATA));
+				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet[currentBuffer], 0, nullptr);
 
-				vkCmdBindVertexBuffers(commandBuffer, 0, 1, &OBJMESHES[i]->vertexHandle, offsets);
-				vkCmdBindIndexBuffer(commandBuffer, OBJMESHES[i]->indexHandle, 0, VK_INDEX_TYPE_UINT32);
-				vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(MESH_INDEX), &meshIndex);
-				vkCmdDrawIndexed(commandBuffer, OBJMESHES[i]->meshes[j].drawInfo.indexCount, 1, OBJMESHES[i]->meshes[j].drawInfo.indexOffset, 0, 0);
+				//Loop tho objmesh and draw
+				for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
+				{
+					meshIndex = { OBJMESHES[i]->wMatrix, ID };
+					ID++;
+
+					vkCmdBindVertexBuffers(commandBuffer, 0, 1, &OBJMESHES[i]->vertexHandle, offsets);
+					vkCmdBindIndexBuffer(commandBuffer, OBJMESHES[i]->indexHandle, 0, VK_INDEX_TYPE_UINT32);
+					vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(MESH_INDEX), &meshIndex);
+					vkCmdDrawIndexed(commandBuffer, OBJMESHES[i]->meshes[j].drawInfo.indexCount, 1, OBJMESHES[i]->meshes[j].drawInfo.indexOffset, 0, 0);
+				}
+			}
+
+			ID = 0;
+
+			viewport.x = (float)width / 2;
+			scissor.offset.x = width / 2;
+
+			vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+			vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline[1]);
+
+			for (unsigned i = 0; i < OBJMESHES.size(); i++)
+			{
+				//Loop tho objmesh and draw
+				for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
+				{
+					meshIndex = { OBJMESHES[i]->wMatrix, ID };
+					ID++;
+
+					vkCmdBindVertexBuffers(commandBuffer, 0, 1, &OBJMESHES[i]->vertexHandle, offsets);
+					vkCmdBindIndexBuffer(commandBuffer, OBJMESHES[i]->indexHandle, 0, VK_INDEX_TYPE_UINT32);
+					vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(MESH_INDEX), &meshIndex);
+					vkCmdDrawIndexed(commandBuffer, OBJMESHES[i]->meshes[j].drawInfo.indexCount, 1, OBJMESHES[i]->meshes[j].drawInfo.indexOffset, 0, 0);
+				}
 			}
 		}
-
-		ID = 0;
-
-		viewport.x = (float)width / 2;
-		scissor.offset.x = width / 2;
-
-		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline[1]);
-
-		for (unsigned i = 0; i < OBJMESHES.size(); i++)
+		else
 		{
-			//GvkHelper::write_to_buffer(device, storageData[currentBuffer], &ModelData, sizeof(SHADER_MODEL_DATA));
-			//vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet[currentBuffer], 0, nullptr);
+			// setup the pipeline's dynamic settings
+			VkViewport viewport = {
+				0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1
+			};
+			VkRect2D scissor = { {0, 0}, {width, height} };
+			vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+			vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline[0]);
 
-			//Loop tho objmesh and draw
-			for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
+			VkDeviceSize offsets[] = { 0 };
+
+			MESH_INDEX meshIndex;
+			unsigned ID = 0;
+
+			for (unsigned i = 0; i < OBJMESHES.size(); i++)
 			{
-				meshIndex = { OBJMESHES[i]->wMatrix, ID };
-				ID++;
+				GvkHelper::write_to_buffer(device, storageData[currentBuffer], &ModelData, sizeof(SHADER_MODEL_DATA));
+				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet[currentBuffer], 0, nullptr);
 
-				vkCmdBindVertexBuffers(commandBuffer, 0, 1, &OBJMESHES[i]->vertexHandle, offsets);
-				vkCmdBindIndexBuffer(commandBuffer, OBJMESHES[i]->indexHandle, 0, VK_INDEX_TYPE_UINT32);
-				vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(MESH_INDEX), &meshIndex);
-				vkCmdDrawIndexed(commandBuffer, OBJMESHES[i]->meshes[j].drawInfo.indexCount, 1, OBJMESHES[i]->meshes[j].drawInfo.indexOffset, 0, 0);
+				//Loop tho objmesh and draw
+				for (unsigned j = 0; j < OBJMESHES[i]->meshCount; j++)
+				{
+					meshIndex = { OBJMESHES[i]->wMatrix, ID };
+					ID++;
+
+					vkCmdBindVertexBuffers(commandBuffer, 0, 1, &OBJMESHES[i]->vertexHandle, offsets);
+					vkCmdBindIndexBuffer(commandBuffer, OBJMESHES[i]->indexHandle, 0, VK_INDEX_TYPE_UINT32);
+					vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(MESH_INDEX), &meshIndex);
+					vkCmdDrawIndexed(commandBuffer, OBJMESHES[i]->meshes[j].drawInfo.indexCount, 1, OBJMESHES[i]->meshes[j].drawInfo.indexOffset, 0, 0);
+				}
 			}
 		}
+		
 	}
 
 	//Camera movment
@@ -570,12 +606,18 @@ public:
 		float D = 0;			Input.GetState(G_KEY_D, D);
 		float LStickY = 0;		Input.GetState(G_LY_AXIS, LStickY);
 		float LStickX = 0;		Input.GetState(G_LX_AXIS, LStickX);
+		float F = 0;			Input.GetState(G_KEY_F, F);
+		float R = 0;			Input.GetState(G_KEY_R, R);
 
 		if (GetAsyncKeyState(VK_F1) & 0x8000)
 		{
 			CleanUp();
 			return false;
 		}
+
+
+		if (F != 0 && splitScreen) splitScreen = false;
+		if (R != 0 && !splitScreen) splitScreen = true;
 
 		displacement = {
 			(D - A + LStickX) * deltaTime.count() * cameraMoveSpeed,

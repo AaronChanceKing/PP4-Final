@@ -19,6 +19,10 @@ Level renderer made in Vulkan for PP4 final
 -Choose a file from the Game Data folder located in each asset folder (Must have the same name as the level being loaded)
 -Needs access to ../../Assets folder to run
 
+***Enable Split screen***
+-Press 'R' to turn on split screen
+-Press 'F' to return to one screen
+
 
 ***Credits***
 Low poly style PIG by zisongbr (https://opengameart.org/content/low-poly-pig-with-blend)
