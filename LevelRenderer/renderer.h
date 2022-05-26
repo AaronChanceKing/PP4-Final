@@ -73,9 +73,10 @@ class Renderer
 	//Matrix
 	GW::MATH::GMATRIXF vMatrix;
 	GW::MATH::GMATRIXF pMatrix;
+
 	//Lighting
 	GW::MATH::GVECTORF LightDirection = { -1.0f, -1.0f, 2.0f, 0.0f };
-	GW::MATH::GVECTORF LightColor = { 0.9f, 0.9, 1.0f, 1.0f };
+	GW::MATH::GVECTORF LightColor = { 0.9f, 0.9f, 0.75f, 1.0f };
 
 	//H2B
 	SHADER_MODEL_DATA ModelData;
@@ -106,14 +107,6 @@ public:
 		Input.Create(win);
 		Controller.Create();
 		proxy.Create();
-
-		//View Matrix
-		GW::MATH::GVECTORF eye = { 5.0f, 5.0f, -3.0f, 0.0f };
-		GW::MATH::GVECTORF at = { 1.0f, 0.0f, 0.0f, 0.0f };
-		GW::MATH::GVECTORF up = { 0.0f, 1.0f, 0.0f, 0.0f };
-		proxy.LookAtLHF(eye, at, up, vMatrix);
-		ModelData.viewMatrix = vMatrix;
-		//Inverse View Matrix
 		
 		//Projection Matrix
 		float AR = 0.0f;
@@ -131,6 +124,7 @@ public:
 		LightDirection.x /= lightVectLength;
 		LightDirection.y /= lightVectLength;
 		LightDirection.z /= lightVectLength;
+
 		ModelData.ligthDirection = LightDirection;
 		ModelData.sunColor = LightColor;
 
@@ -149,15 +143,18 @@ public:
 				//Find first mesh
 				if (line == "MESH")
 				{
-					while (std::getline(myFile, line))
-					{
-						GW::MATH::GMATRIXF objMatr;
-						std::string mesh;
-						mesh += line;
-						LevelRenderer* instance = new LevelRenderer(mesh, levelName);
-						OBJMESHES.push_back(instance);
-						break;
-					}
+					std::getline(myFile, line);
+					GW::MATH::GMATRIXF objMatr;
+					LevelRenderer* instance = new LevelRenderer(line, levelName);
+					OBJMESHES.push_back(instance);
+				}
+				else if (line == "CAMERA")
+				{
+					std::getline(myFile, line);
+					GW::MATH::GMATRIXF objMatr;
+					LevelRenderer* instance = new LevelRenderer(levelName);
+					proxy.InverseF(instance->wMatrix, vMatrix);
+					ModelData.viewMatrix = vMatrix;
 				}
 			}
 			//Close file
